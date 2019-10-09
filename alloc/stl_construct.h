@@ -21,22 +21,22 @@ inline void destory(T *p){
 //传入迭代器，进行类型推导，视类型情况进行析构
 template<typename Iterator>
 inline void destory(Iterator begin,Iterator end){
-	//此处value_type(begin)的用法存疑
+	//value_type返回的为指针类型
 	_destory(begin,end,value_type(begin)); 
 }
 
 
 template<typename Iterator,typename T>
-inline void _destory(Iterator begin,Iterator end,T){
+inline void _destory(Iterator begin,Iterator end,T*){
 	typedef typename _type_traits<T>::has_trivial_destructor trivial_destrcutor;
-	//此处带括号的用法存疑
-	_destory_aux(begin,end,trivial_destrcutor());//注意要带括号//通过这里分为两种情况
+	//带括号是因为要构造一个具体对象，有
+	_destory_aux(begin,end,trivial_destrcutor());
 }
 
 
 //一个一个删除
 template<typename Iterator,typename T>
-inline void _destory_aux(Iterator begin,Iterator end,_false_type){
+inline void _destory_aux(Iterator begin,Iterator end,__false_type){
 	for(;begin!=end;begin++){
 		destory(&*begin);
 	}
@@ -44,7 +44,7 @@ inline void _destory_aux(Iterator begin,Iterator end,_false_type){
 
 //什么也不用做
 template<typename Iterator,typename T>
-inline void _destory_aux(Iterator begin,Iterator end,_true_type){
+inline void _destory_aux(Iterator begin,Iterator end,__true_type){
 }
 
 //以下为第二个版本的特化版本
