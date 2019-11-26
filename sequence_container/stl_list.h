@@ -1,4 +1,5 @@
-
+#ifndef __STL_LIST_H_
+#define __STL_LIST_H_
 //list的节点类型,双向链表
 template<typename T>
 struct __list_node{
@@ -181,18 +182,7 @@ template<typename T,typename Alloc>
 void list<T,Alloc>::remove(const T &x){
 	iterator first=begin();
 	iterator last=end();
-	while(first!=last){
-		iterator tmp=first;
-		++tmp;
-		if(*first == x){
-			erase(first);
-		}
-		first=tmp;
-	}
-}
-
-template<typename T,typename Alloc>
-void list<T,Alloc>::unique(){
+	while(first!=last){ iterator tmp=first; ++tmp; if(*first == x){ erase(first); } first=tmp; } } template<typename T,typename Alloc> void list<T,Alloc>::unique(){
 	iterator first=begin();
 	iterator last=end();
 	if(first==last)return;
@@ -341,4 +331,4 @@ void list<T,Alloc>::sort(){
 		swap(count[fill-1]);
 	}
 }
-
+#endif
