@@ -1,5 +1,6 @@
 #ifndef __STL_DEQUE_H_
 #define __STL_DEQUE_H_
+#include"../stl_config.h"
 //全局
 inline __deque_buf_size(size_t n, size_t size)
 {
@@ -38,6 +39,12 @@ struct __deque_iterator //没有继承iterator
 		first = *new_node;
 		last = first + difference_type(buffer_size());
 	}
+
+	//构造函数
+	__deque_iterator(T* x, map_pointer y): current(x), first(y), last(*y + buffer_size()), node(y) {}
+	__deque_iterator(): current(0), first(0), last(0), node(0) {}
+	__deque_iterator(const iterator&x): current(x.current), first(y.first), last(x.last), node(x.node) {}
+
 	//关键的操作符重载
 	reference operator*() const
 	{
@@ -128,33 +135,275 @@ struct __deque_iterator //没有继承iterator
 	{
 		return *(*this + n);//*this是self类型，再次*才是调用的运算符重载
 	}
+
+	//由于此处是对迭代器的相等与否的重载，因此是比较指针而不是具体内容
 	bool operator==(const self &x)
 	{
-		return current == x.current;//必须地址相同?不应该是内容相同吗
+		return current == x.current;
 	}
 	bool operator!=(const self &x)
 	{
 		return !(*this == x);
 	}
-	bool operator<(const self &x){
-		return 
+	bool operator<(const self &x)
+	{
+		return (node == x.node) ? (current < x.current) : (node < x.node);
 	}
-	
+	bool operator>(const self&x)
+	{
+		return x < *this;
+	}
+	bool operator<=(const self &x)
+	{
+		return !(x < *this);
+	}
+	bool operator>=(const self&x)
+	{
+		return !(*this < x);
+	}
 }
+
+
+template<class T, class Alloc>
+class deque_base
+{
+public:
+	typedef __deque_iterator<T, T&, T*> iterator;
+	//const_iterator的作用？
+	typedef Alloc allocator_type;
+	allocator_type get_allocator() const
+	{
+		return allocator_type();
+	}
+
+	deque_base(const allocator_type&, size_t num_elements)
+		: map(0), map_size(0), start(), finish()
+	{
+		initialize_map(num_elements);
+	}
+	deque_base(const allocator_type&, size_t num_elements)
+		: map(0), map_size(0), start(), finish() {}
+	~deque_base();
+protected:
+	iterator start;
+	iterator finish;
+	T** map;
+	size_t map_size;
+
+	//分配空间和回收空间
+	typedef simple_alloc<T, Alloc> node_alloc_type;
+	typedef simple_alloc<T*, Alloc> map_alloc_type;
+
+	T* allocate_node()
+	{
+		return node_alloc_type::allocate(__deque_buf_size(sizeof(T)));
+	}
+	void deallocate_node(T *p)
+	{
+		node_alloc_type::deallocate(p.sizeof(T));
+	}
+	T** allocate_map(size_t n)
+	{
+		return   map_alloc_type::allocate(n);
+	}
+	void deallocate_map(T** p, size_t n)
+	{
+		map_alloc_type::deallocate(p, n);
+	}
+
+protected:
+	void initialize_map(size_t);
+	void create_nodes(T** start, T** finish);
+	void destory_nodes(T** start, T** finish);
+	enum {initialize_map_size = 8};//此处的作用?
+}
+
+template<class T, class Alloc>
+deque_base<T, Alloc>::~deque_base()
+{
+	if (map)
+	{
+		destory_nodes(start.node, finish.node + 1); //为什么加一
+		deallocate_map(map, map_size);
+	}
+}
+
+template<class T, class Alloc>
+void deque_base<T, Alloc>::initialize_map(size_t num_elements)
+{
+	size_t num_nodes = num_elements / __deque_buf_size(sizeof(T)) + 1;
+	map_size = max((size_t)initialize_map_size, num_nodes + 2); //可见一个map最少管理8个节点，最多是“所需节点数加2”
+	map = allocate_map(map_size);
+
+	T** nstart = map + (map_size - num_nodes) / 2; //start和finish放在最中间，以便向两端扩展
+	T**  nfinish = start + num_nodes;
+
+	__STL_TRY
+	{
+		create_nodes(nstart, nfinish);
+	}
+	__STL_UNWIND((deallocate_map(map, map_size), map = 0, map_size = 0));
+
+	start.set_node(nstart);
+	finish.set_node(nfinish);
+	start.cur = start.first;
+	finish.cur = finish.first + num_elements % __deque_buf_size(sizeof(T));
+}
+template<class T, class Alloc>
+void deque_base<T, Alloc>::create_node(T** start, T**finish)
+{
+	T** cur;
+	__STL_TRY
+	{
+		for (cur = start; cur != finish; cur++)
+			*cur = allocate_node();
+	}
+	__STL_UNWIND(destory_nodes(start, cur));
+}
+template<class T, class Alloc>
+void deque_base<T, Alloc>::destory_nodes(T** start, T**finish)
+{
+	T **cur;
+	for (cur = start, cur != finish, cur++)
+		deallocate_node(*cur);
+}
+
+
 //BufSiz为0的话默认为512bytes
 template<class T, class Alloc = alloc, size_t BufSiz = 0>
-class deque
+class deque : protected deque_base<T, Alloc>
 {
+private:
+	typedef  deque_base<T, Alloc> Base;
 public:
 	typedef T value_type;
 	typedef value_type* pointer;
 	typedef value_type& reference;
 	typedef size_t size_type;
 	typedef ptrdiff_t difference_type;
+
+	typedef typename Base::allocator_type allocator_type;
+	allocator_type get_allocator() const
+	{
+		return Base::get_allocator();
+	}
+public:
+	typedef __deque_iterator<T, T&, T*>  iterator;
 protected://内部的typedef
 	typedef pointer* map_pointer;//指针的指针
+	static size_t buffer_size()
+	{
+		return __deque_buf_size(sizeof(T));
+	}
 protected:
-	map_pointer map;
-	size_type map_size;
+//这些命名空间的用处是什么，不是可以直接使用？
+#ifdef __STL_USE_NAMESPACES
+	using _Base::_M_initialize_map;
+	using _Base::_M_create_nodes;
+	using _Base::_M_destroy_nodes;
+	using _Base::_M_allocate_node;
+	using _Base::_M_deallocate_node;
+	using _Base::_M_allocate_map;
+	using _Base::_M_deallocate_map;
+
+	using _Base::_M_map;
+	using _Base::_M_map_size;
+	using _Base::_M_start;
+	using _Base::_M_finish;
+#endif /* __STL_USE_NAMESPACES */
+public:
+	void    fill_initialize(size_type n, const value_type & value);
+	deque(size_type n, const value_type &value): start(), finish(), map(0), map_size(0)
+	{
+		fill_initialize(n, value);
+	}
+	iterator begin(){return start;}
+iterator	end(){return finish;}
+	reference operator[](size_type n)
+	{
+		return start[difference_type(n)];
+	}
+	reference front()
+	{
+		return *start;
+	}
+	reference back()
+	{
+		iterator tmp = finish;
+		--tmp;
+		return *tmp;//不能直接用*(finish-1)吗
+	}
+	size_type size() const
+	{
+		return finish - start;
+	}
+	size_type max_size() const
+	{
+		return size_type(-1);
+	}
+	bool empty()
+	{
+		return start == finish;
+	}
+	
+
+	//从push和pop可以看出front出current可以直接取值，但是finish处实在最后一个的下一个地址
+	void push_back(const T& x){
+		if(finish.current!=finish.last-1){//如果有充足备用空间
+			construct(finish.current,x);//不用先加一吗
+			++finish.current;
+		}else{
+			push_back_aux(x);
+		}
+	}
+	void push_front(const T& x){
+		if(start.current!=start.first){
+			construct(start.current-1,x)
+			--start.current;//不会越界，只会到达最前面从而无法进行下次添加
+		}else{
+			push_front_aux(x);
+		}
+	}
+	void pop_back(){
+		if(finish.current!=finish.first){
+			--finish.current;
+			destory(finish.current);
+		}else{
+			pop_back_aux();
+		}
+	}
+	void pop_front(){
+		if(start.current!=start.last-1){//如果等于的话++操作需要转向下一个node
+			destory(start.current);
+			++start.current;
+		}else{
+			pop_front_aux();
+		}
+	}
+public:
+	iterator insert(iterator position,const value_type& x){
+		if(position.cur==start.current){
+			push_front(x);
+			return start;
+		}else if(position.cur == finish.current){
+			push_back(x);
+			iterator tmp=finish;
+			--tmp;//减一下才是真正的地方
+			return tmp;
+		}else{
+			insert_aux(position,x);
+		}
+	}
 }
+
+//该写一些aux和其他了
+
+
+//暂置
+template<class T, class Alloc, size_t  BufSiz>
+void deque<T, Alloc, BufSiz>::fill_initialize(size_type n, const value_type &value)
+{
+
+}
+
 #endif
