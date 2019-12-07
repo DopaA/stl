@@ -311,6 +311,44 @@ protected:
 	using _Base::_M_start;
 	using _Base::_M_finish;
 #endif /* __STL_USE_NAMESPACES */
+protected:
+
+	void reallocate_map(size_type nodes_to_add,bool add_at_front){
+		size_type old_num_nodes=finish.node -start.node+1;
+		size_type new_num_nodes=old_num_nodes+nodes_to_add;
+		map_pointer new_start;
+		//如果总的map的大小仍然大于新的用已经使用的node数，则不用再分配空间，只需要平衡一下
+		if(map_size>2*new_num_nodes){
+			//如果是加在前方的那前方就多一点空间
+			new_start=map+(map_size-new_num_nodes)/2+
+				(add_at_front?nodes_to_add:0);
+			if(new_start<start.node)//新的开始节点在前方
+				copy(start.node,finish.node+1,new_start);
+			else//如果在后方，那么就要反过来复制迁移，第三个参数为迁移之后的最后的地方
+				copy_backward(start.node,finish.node+1,new_node+old_num_nodes);
+		}else{//否则重新分配空间
+			size_type new_map_size=map_size+max(map_size,nodes_to_add)+2;//最少扩大两倍
+			map_pointer new_map=allocate_map(map_size);
+			new_start=new_map+(new_map_size-new_num_nodes)/2+(add_at_front?nodes_to_add:0);
+			copy(start.node,finish.node+1,new_start);
+			deallocate_map(map,map_size);
+			map=new_map;
+			map_size=new_map_size;
+		}
+		//不能直接赋值吗
+		start.set_node(new_start);
+		finish.set_node(new_start+old_num_nodes-1);
+	}
+	//默认添加一个node
+	//如果要在后方储备的节点数大于剩余的空的nodes，就调用reallocate_map,
+	void reserve_map_at_back(size_type nodes_to_add=1){
+		if(nodes_to_add+1>map_size-(finish.node-map))
+			reallocate_map(nodes_to_add,false);
+	}
+	void reserve_map_at_front(){
+		if(nodes_to_add+1>(start.node-map))
+			reallocate_map();
+	}
 public:
 	void    fill_initialize(size_type n, const value_type & value);
 	deque(size_type n, const value_type &value): start(), finish(), map(0), map_size(0)
@@ -346,7 +384,7 @@ iterator	end(){return finish;}
 		return start == finish;
 	}
 	
-
+public:
 	//从push和pop可以看出front出current可以直接取值，但是finish处实在最后一个的下一个地址
 	void push_back(const T& x){
 		if(finish.current!=finish.last-1){//如果有充足备用空间
@@ -380,7 +418,44 @@ iterator	end(){return finish;}
 			pop_front_aux();
 		}
 	}
+	//
+	void push_back_aux(const value_type &x){
+		value_type x_copy = x;
+		reserve_map_at_back();//
+		*(finish.node+1)=allocate_node();//分配一个新的node空间
+		__STL_TRY{
+			construct(finish.current,x_copy);//注意push_back是在恰好剩最后一个空间的时候调用的这个函数，因此先在最后一个上面进行构造，然后将finish移入新的节点
+			finish.set_node(finish.node+1);
+			finish.current=finish.first;
+		}
+		__STL_UNWIND(deallocate_node(*(finish.node+1)));
+	}
+	void push_front_aux(const value_type &x){
+		value_type x_copy=x;//为什么要用x_copy而不直接用x
+		reserve_map_at_front();
+		*(start.node-1) = allocate_node();
+		__STL_TRY{
+			start.set_node(start.node-1);
+			start.current=start.last-1;
+			construct(start.current,x_copy);
+		}
+		__STL_UNWIND((++start,deallocate_node(*(start.node-1))));
+	}
+	void pop_back_aux(){
+		deallocate_node(finish.first);
+		finish.set_node(finish.node-1);//这里不是已经被deallocate了吗
+		finish.current=finish.last-1;
+		destory(finish.current);//这里才是最后一个数
+	}
+	void pop_front_aux(){
+		destory(start.current);
+		deallocate_node(start.first);
+		start.set_node(start.node+1);
+		start.current=start.first;
+	}
+
 public:
+	//此处的插入好像是在所指位置的插入,不是所指位置的前方！
 	iterator insert(iterator position,const value_type& x){
 		if(position.cur==start.current){
 			push_front(x);
@@ -394,16 +469,98 @@ public:
 			insert_aux(position,x);
 		}
 	}
+	//通过判断哪边元素最少进行移动，尽量减少移动次数
+	//但是这个辅助函数不是在所指位置前方插入啊，而是在所指位置插入。
+	iterator insert_aux(iterator position,const value_type& x){
+		difference_type index=position -start;
+		value_type x_copy=x;
+		if(size_type(index)<size()/2){
+			push_front(front());
+			iterator front1=start;
+			++front1;
+			iterator front2=front1;
+			++front2;
+			position = start+index;
+			iterator position1=position;
+			++position1;
+			copy(front2,pos1,front1);
+		}else{
+			push_back(back());
+			iterator back1=finish;
+			--back1;
+			iterator back2=back1;
+			--back2;
+			pos=start+index;
+			copy_backward(position,back2,back1);
+		}
+		*pos=x_copy;
+		return pos;
+	}
+
+	//erase 和clear
+	iterator erase(iterator pos){
+		iterator next=pos;
+		++next;
+		difference_type index=pos-start;
+		if(size_type(index)<(size()>>1)){//如果擦除位置靠前，那么前面的移动会少
+			copy_backward(start,pos,next);
+			pop_front();
+		}else{
+			copy(next,finish,pos);
+			pop_back();
+		}
+		return start+index;
+	}
+	iterator erase(iterator first,iterator last){
+		if(first==start&&last==finish){
+			clear();
+			return finish;
+		}else{
+			difference_type n=first-last;
+			difference_type elems_before=first-start;
+			if(elems_before<(size()-n)/2){
+				copy_backward(start,first,last);
+				iterator new_start=start+n;
+				destory(start,new_start);
+				for(map_pointer cur=start.node;cur<new_start.node;++cur){
+					data_allacator::deallocate(*cur,buffer_size());
+				}
+				start=new_start;
+			}else{
+				copy(last,finish,first);
+				iterator new_finish=finish-n;
+				destory(new_finish,finish);
+				for(map_pointer cur=new_finish.node;cur<finish.node;++cur){
+					data_allacator::deallocate(*cur,buffer_size());
+				}
+				finish=new_finish;
+			}
+			return start+elems_before;
+		}
+	}
+	void clear(){
+		for(map_pointer node=start.node+1;node<finish.node;++node){
+			destory(*node,*node+buffer_size());
+			data_allacator::deallocate(*node,buffer_size());
+		}
+		if(start.node!=finish.node){//至少有头尾两个缓冲区
+			destory(start.first,start.last);
+			destory(finish.first,finish.last);
+			data_allacator::deallocate(finish.first,buffer_size());
+		}else{
+			destory(start.first,start.last);
+		}
+		finish=start;
+	}
 }
 
-//该写一些aux和其他了
 
 
 //暂置
 template<class T, class Alloc, size_t  BufSiz>
 void deque<T, Alloc, BufSiz>::fill_initialize(size_type n, const value_type &value)
 {
-
+	
 }
 
 #endif
